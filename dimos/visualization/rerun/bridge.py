@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import field
+from dataclasses import dataclass, field
 import signal
 import socket
 import subprocess
@@ -105,6 +105,43 @@ BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
 
 RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
+
+
+@dataclass
+class TopicTransportPubSub:
+    """Adapt explicit topic transports to the subscribe_all interface."""
+
+    topic_transports: list[tuple[Any, Any]]
+
+    def start(self) -> None:
+        for _topic, transport in self.topic_transports:
+            start = getattr(transport, "start", None)
+            if callable(start):
+                start()
+
+    def stop(self) -> None:
+        for _topic, transport in self.topic_transports:
+            stop = getattr(transport, "stop", None)
+            if callable(stop):
+                stop()
+
+    def subscribe_all(self, callback: Callable[[Any, Any], Any]) -> Callable[[], None]:
+        subscriptions: list[Callable[[], None]] = []
+
+        for topic, transport in self.topic_transports:
+
+            def on_message(msg: Any, _topic: Any = topic) -> None:
+                callback(msg, _topic)
+
+            unsubscribe = transport.subscribe(on_message)
+            if callable(unsubscribe):
+                subscriptions.append(unsubscribe)
+
+        def unsubscribe_all() -> None:
+            for unsubscribe in subscriptions:
+                unsubscribe()
+
+        return unsubscribe_all
 
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:

@@ -121,9 +121,13 @@ Natural language control with an LLM agent that understands physical space:
 
 ```bash
 export OPENAI_API_KEY=<YOUR_KEY>
+export DIMOS_TTS_PROVIDER=minimax  # omit or set to openai to use OpenAI TTS
+export MINIMAX_API_KEY=<YOUR_MINIMAX_KEY>
 export ROBOT_IP=<YOUR_GO2_IP>
 dimos run unitree-go2-agentic
 ```
+
+Optional MiniMax TTS overrides: `MINIMAX_TTS_MODEL`, `MINIMAX_TTS_VOICE_ID`, `MINIMAX_TTS_ENDPOINT`.
 
 Then use the human CLI to talk to the agent:
 

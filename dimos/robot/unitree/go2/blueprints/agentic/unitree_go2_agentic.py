@@ -22,7 +22,7 @@ from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree
 unitree_go2_agentic = autoconnect(
     unitree_go2_spatial,
     McpServer.blueprint(),
-    McpClient.blueprint(),
+    McpClient.blueprint(model="openai:doubao-seed-2.0-pro"),
     _common_agentic,
 )
 

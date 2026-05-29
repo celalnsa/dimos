@@ -156,7 +156,7 @@ class SecurityModule(Module):
         self._router: PatrolRouter = _create_router(self.config.g)
         self._visual_servo = _create_visual_servo(self.config, self.config.g)
         self._detector = YoloPersonDetector()
-        self._tracker = EdgeTAMProcessor()
+        self._tracker: EdgeTAMProcessor | None = None
 
         self._depth_estimator = DepthEstimator(self.depth_image.publish)
 
@@ -185,7 +185,9 @@ class SecurityModule(Module):
         self._stop_security_patrol_internal()
         self._depth_estimator.stop()
         self._detector.stop()
-        self._tracker.stop()
+        if self._tracker is not None:
+            self._tracker.stop()
+            self._tracker = None
         super().stop()
 
     @skill
@@ -197,6 +199,12 @@ class SecurityModule(Module):
         with self._lock:
             if self._main_thread is not None and self._main_thread.is_alive():
                 return "Security patrol is already running. Use `stop_security_patrol` to stop."
+
+        try:
+            self._get_tracker()
+        except (FileNotFoundError, RuntimeError) as exc:
+            logger.warning("security patrol unavailable", error=str(exc))
+            return f"Security patrol unavailable: {exc}"
 
         if not self._depth_started:
             self._depth_estimator.start()
@@ -221,6 +229,11 @@ class SecurityModule(Module):
             "Security patrol started. The robot will patrol, detect, and follow "
             "persons automatically. Use `stop_security_patrol` to stop."
         )
+
+    def _get_tracker(self) -> EdgeTAMProcessor:
+        if self._tracker is None:
+            self._tracker = EdgeTAMProcessor()
+        return self._tracker
 
     @skill
     def stop_security_patrol(self) -> str:
@@ -310,7 +323,12 @@ class SecurityModule(Module):
 
         # Init EdgeTAM with YOLO bbox for continuous tracking
         box = np.array(list(best.bbox), dtype=np.float32)
-        self._tracker.init_track(image=image, box=box, obj_id=1)
+        try:
+            tracker = self._get_tracker()
+        except (FileNotFoundError, RuntimeError) as exc:
+            logger.warning("tracker unavailable", error=str(exc))
+            return
+        tracker.init_track(image=image, box=box, obj_id=1)
 
         self._cancel_current_goal()
         self._has_active_goal = False
@@ -324,6 +342,12 @@ class SecurityModule(Module):
 
         if latest_image is None:
             self._stop_event.wait(timeout=_ANTI_BUSY_LOOP_TIMEOUT)
+            return
+
+        if self._tracker is None:
+            logger.warning("follow step requested before tracker initialization")
+            self.cmd_vel.publish(Twist.zero())
+            self._transition_to("PATROLLING")
             return
 
         detections = self._tracker.process_image(latest_image)
@@ -372,11 +396,10 @@ class SecurityModule(Module):
         return max(persons, key=lambda d: d.bbox_2d_volume())
 
     def _cancel_current_goal(self) -> None:
-        """Publish current pose as goal to cancel in-progress navigation."""
-        with self._lock:
-            pose = self._latest_pose
-        if pose is not None:
-            self.goal_request.publish(pose)
+        """Cancel in-progress navigation without publishing a synthetic goal."""
+        planner = getattr(self, "_planner_spec", None)
+        if planner is not None:
+            planner.cancel_goal()
 
     def _transition_to(self, new_state: State) -> None:
         with self._lock:

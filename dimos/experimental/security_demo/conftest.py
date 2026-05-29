@@ -60,6 +60,7 @@ def security_module(mocker):
     # These are set by framework wiring, not __init__
     module._planner_spec = mocker.MagicMock()
     module._speak_skill = mocker.MagicMock()
+    module._tracker = mocker.MagicMock()
 
     yield module
 

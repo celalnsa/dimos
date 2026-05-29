@@ -103,8 +103,7 @@ class PatrollingModule(Module):
         self._patrol_task = None
         self._planner_spec.set_replanning_enabled(True)
         self._planner_spec.reset_safe_goal_clearance()
-        if self._latest_pose is not None:
-            self.goal_request.publish(self._latest_pose)
+        self._planner_spec.cancel_goal()
 
     async def _patrol_loop(self) -> None:
         while True:

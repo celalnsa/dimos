@@ -15,11 +15,14 @@
 
 from enum import Enum
 import io
+import os
 import threading
 import time
+from typing import Any
 
 from openai import OpenAI
 from reactivex import Observable, Subject
+import requests
 import soundfile as sf  # type: ignore[import-untyped]
 
 from dimos.stream.audio.base import (
@@ -30,6 +33,12 @@ from dimos.stream.audio.text.base import AbstractTextConsumer, AbstractTextEmitt
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+DEFAULT_MINIMAX_TTS_ENDPOINT = "https://api.minimax.io/v1/t2a_v2"
+DEFAULT_MINIMAX_TTS_MODEL = "speech-2.5-hd-preview"
+DEFAULT_MINIMAX_TTS_VOICE_ID = "Chinese (Mandarin)_Reliable_Executive"
+DEFAULT_TTS_SAMPLE_RATE = 24000
+DEFAULT_MINIMAX_TTS_BITRATE = 128000
 
 
 class Voice(str, Enum):
@@ -164,14 +173,11 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
             text: The text to synthesize
         """
         try:
-            # Call OpenAI TTS API
-            response = self.client.audio.speech.create(
-                model=self.model, voice=self.voice.value, input=text, speed=self.speed
-            )
+            audio_content = self._synthesize_audio_content(text)
             self.text_subject.on_next(text)
 
             # Convert the response to audio data
-            audio_data = io.BytesIO(response.content)
+            audio_data = io.BytesIO(audio_content)
 
             # Read with soundfile
             with sf.SoundFile(audio_data, "r") as sound_file:
@@ -197,6 +203,75 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
 
         except Exception as e:
             logger.error(f"Error synthesizing speech: {e}")
+
+    def _synthesize_audio_content(self, text: str) -> bytes:
+        provider = os.getenv("DIMOS_TTS_PROVIDER", os.getenv("TTS_PROVIDER", "openai")).lower()
+        if provider == "openai":
+            return self._synthesize_openai_audio(text)
+        if provider == "minimax":
+            return self._synthesize_minimax_audio(text)
+        raise ValueError(f"Unsupported TTS provider: {provider}")
+
+    def _synthesize_openai_audio(self, text: str) -> bytes:
+        response = self.client.audio.speech.create(
+            model=self.model, voice=self.voice.value, input=text, speed=self.speed
+        )
+        return response.content  # type: ignore[no-any-return]
+
+    def _synthesize_minimax_audio(self, text: str) -> bytes:
+        api_key = os.getenv("MINIMAX_API_KEY")
+        if not api_key:
+            raise RuntimeError("MINIMAX_API_KEY is required when DIMOS_TTS_PROVIDER=minimax")
+
+        payload = self._minimax_payload(text)
+        response = requests.post(
+            os.getenv("MINIMAX_TTS_ENDPOINT", DEFAULT_MINIMAX_TTS_ENDPOINT),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data: dict[str, Any] = response.json()
+
+        base_resp = data.get("base_resp") or {}
+        status_code = base_resp.get("status_code", 0)
+        if status_code != 0:
+            status_msg = base_resp.get("status_msg") or f"status_code={status_code}"
+            raise RuntimeError(f"MiniMax TTS failed: {status_msg}")
+
+        audio_hex = (data.get("data") or {}).get("audio")
+        if not audio_hex:
+            trace_id = data.get("trace_id", "unknown")
+            raise RuntimeError(f"MiniMax TTS returned no audio; trace_id={trace_id}")
+
+        try:
+            return bytes.fromhex(audio_hex)
+        except ValueError as exc:
+            raise RuntimeError("MiniMax TTS returned invalid hex audio") from exc
+
+    def _minimax_payload(self, text: str) -> dict[str, Any]:
+        return {
+            "model": os.getenv("MINIMAX_TTS_MODEL", DEFAULT_MINIMAX_TTS_MODEL),
+            "text": text,
+            "stream": False,
+            "language_boost": "auto",
+            "output_format": "hex",
+            "voice_setting": {
+                "voice_id": os.getenv("MINIMAX_TTS_VOICE_ID", DEFAULT_MINIMAX_TTS_VOICE_ID),
+                "speed": self.speed,
+                "vol": 1,
+                "pitch": 0,
+            },
+            "audio_setting": {
+                "sample_rate": DEFAULT_TTS_SAMPLE_RATE,
+                "bitrate": DEFAULT_MINIMAX_TTS_BITRATE,
+                "format": "wav",
+                "channel": 1,
+            },
+        }
 
     def dispose(self) -> None:
         """Clean up resources."""

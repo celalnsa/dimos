@@ -159,6 +159,9 @@ class ReplayConnection(UnitreeWebRTCConnection, CompositeResource):
     def start(self) -> None:
         pass
 
+    def stop(self) -> None:
+        CompositeResource.stop(self)
+
     def standup(self) -> bool:
         return True
 

@@ -23,6 +23,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.rerun_config import go2_rerun_pubsubs
 from dimos.visualization.vis_module import vis_module
 
 # Mac has some issue with high bandwidth UDP, so we use pSHMTransport for color_image
@@ -97,6 +98,7 @@ def _go2_rerun_blueprint() -> Any:
 
 rerun_config = {
     "blueprint": _go2_rerun_blueprint,
+    "pubsubs": go2_rerun_pubsubs(),
     # Custom converters for specific rerun entity paths
     # Normally all these would be specified in their respectative modules
     # Until this is implemented we have central overrides here
